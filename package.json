@@ -1,0 +1,20 @@
+{
+  "name": "smart-circuit-monitor",
+  "version": "1.0.0",
+  "description": "Smart Short Circuit Detection System with ESP32 and Firebase",
+  "main": "web/index.html",
+  "scripts": {
+    "dev": "python -m http.server 8000",
+    "build": "echo 'Static build complete'",
+    "start": "python -m http.server 8000"
+  },
+  "keywords": [
+    "esp32",
+    "iot",
+    "firebase",
+    "circuit-monitoring",
+    "short-circuit-detection"
+  ],
+  "author": "Circuit Monitor Developer",
+  "license": "MIT"
+}
