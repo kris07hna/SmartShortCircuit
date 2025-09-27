@@ -13,7 +13,6 @@
       "dest": "/web/$1"
     }
   ],
-  "functions": {},
   "headers": [
     {
       "source": "/(.*)",
