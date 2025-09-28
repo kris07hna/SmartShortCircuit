@@ -361,3 +361,59 @@ body::before {
     font-size: 2rem;
   }
 }
+/* Debug Panel Styles */
+.debug-info {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 15px;
+  padding: 1.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.debug-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 1rem;
+}
+
+.debug-row:last-of-type {
+  border-bottom: none;
+}
+
+.debug-row strong {
+  color: #00f260;
+  font-weight: 600;
+}
+
+.status {
+  padding: 0.25rem 0.75rem;
+  border-radius: 20px;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.status.connected {
+  background: linear-gradient(135deg, #00f260 0%, #0575e6 100%);
+  color: white;
+}
+
+.status.disconnected {
+  background: linear-gradient(135deg, #ff6b6b 0%, #ffa500 100%);
+  color: white;
+}
+
+.debug-note {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  background: rgba(0, 242, 96, 0.1);
+  border-left: 4px solid #00f260;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+
+.debug-note strong {
+  color: #00f260;
+}
