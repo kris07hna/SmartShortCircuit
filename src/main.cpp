@@ -23,9 +23,17 @@ const char* password = ""; // Empty for unencrypted WiFi
 #define OLED_RESET -1
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-// INA219 sensor
+// INA219 sensor with enhanced configuration
 Adafruit_INA219 ina219;
 bool ina219Available = false;
+
+// INA219 calibration modes for different measurement ranges
+enum INA219_CalibrationMode {
+  CAL_32V_2A,     // 32V, 2A max (default)
+  CAL_32V_1A,     // 32V, 1A max (higher precision)
+  CAL_16V_400MA   // 16V, 400mA max (highest precision)
+};
+INA219_CalibrationMode calibrationMode = CAL_32V_2A;
 
 // Firebase objects
 FirebaseData fbdo;
@@ -200,11 +208,26 @@ bool initINA219() {
     return true; // Continue without sensor for testing
   }
   
-  // Set calibration based on your expected voltage/current range
-  // Choose the most appropriate for your application:
-  ina219.setCalibration_32V_2A();    // Default: 32V, ±2A
-  // ina219.setCalibration_32V_1A();  // Alternative: 32V, ±1A (higher precision)
-  // ina219.setCalibration_16V_400mA(); // Alternative: 16V, ±400mA (highest precision)
+  // Set calibration based on calibrationMode variable
+  // This allows dynamic calibration selection for optimal precision
+  switch(calibrationMode) {
+    case CAL_32V_2A:
+      ina219.setCalibration_32V_2A();
+      Serial.println("INA219: Using 32V/2A calibration (Standard range)");
+      break;
+    case CAL_32V_1A:
+      ina219.setCalibration_32V_1A();
+      Serial.println("INA219: Using 32V/1A calibration (Higher precision)");
+      break;
+    case CAL_16V_400MA:
+      ina219.setCalibration_16V_400mA();
+      Serial.println("INA219: Using 16V/400mA calibration (Highest precision)");
+      break;
+    default:
+      ina219.setCalibration_32V_2A();
+      Serial.println("INA219: Using default 32V/2A calibration");
+      break;
+  }
   
   // Test sensor reading
   float testVoltage = ina219.getBusVoltage_V();
@@ -238,18 +261,38 @@ bool initINA219() {
 }
 
 void readSensorData() {
-  static float voltageBuffer[5] = {0};
-  static float currentBuffer[5] = {0};
+  static float voltageBuffer[10] = {0};  // Increased buffer for better averaging
+  static float currentBuffer[10] = {0};
   static int bufferIndex = 0;
   static bool bufferFilled = false;
   
   float rawVoltage, rawCurrent, rawPower;
   
   if (ina219Available) {
-    // Read from INA219 sensor
-    rawVoltage = ina219.getBusVoltage_V();
-    rawCurrent = ina219.getCurrent_mA() / 1000.0; // Convert to Amperes
-    rawPower = ina219.getPower_mW() / 1000.0; // Convert to Watts
+    // Read from INA219 sensor with maximum precision
+    float busVoltage = ina219.getBusVoltage_V();
+    float shuntVoltage = ina219.getShuntVoltage_mV() / 1000.0; // Convert mV to V
+    rawVoltage = busVoltage + shuntVoltage; // Total voltage across the load
+    
+    // Get current in mA and convert with maximum precision
+    float currentMA = ina219.getCurrent_mA();
+    rawCurrent = currentMA / 1000.0; // Convert to Amperes with 3 decimal precision
+    
+    // Calculate power with high precision (P = V * I)
+    rawPower = rawVoltage * rawCurrent;
+    
+    // Additional validation for INA219 specific ranges
+    switch(calibrationMode) {
+      case CAL_32V_2A:
+        if (abs(rawCurrent) > 3.2) rawCurrent = current; // Safety limit
+        break;
+      case CAL_32V_1A:
+        if (abs(rawCurrent) > 1.3) rawCurrent = current;
+        break;
+      case CAL_16V_400MA:
+        if (abs(rawCurrent) > 0.5) rawCurrent = current;
+        break;
+    }
     
     // Validate readings (check for reasonable values)
     if (rawVoltage < -1 || rawVoltage > 50 || isnan(rawVoltage)) {
@@ -280,23 +323,23 @@ void readSensorData() {
     }
   }
   
-  // Apply moving average filter for stable readings
+  // Apply enhanced moving average filter for stable readings
   voltageBuffer[bufferIndex] = rawVoltage;
   currentBuffer[bufferIndex] = rawCurrent;
-  bufferIndex = (bufferIndex + 1) % 5;
+  bufferIndex = (bufferIndex + 1) % 10;  // Updated for larger buffer
   
   if (bufferIndex == 0) bufferFilled = true;
   
-  // Calculate filtered values
+  // Calculate filtered values with better averaging
   if (bufferFilled) {
     voltage = 0;
     current = 0;
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 10; i++) {  // Updated for larger buffer
       voltage += voltageBuffer[i];
       current += currentBuffer[i];
     }
-    voltage /= 5.0;
-    current /= 5.0;
+    voltage /= 10.0;  // Updated for larger buffer
+    current /= 10.0;  // Updated for larger buffer
   } else {
     voltage = rawVoltage;
     current = rawCurrent;
@@ -307,25 +350,51 @@ void readSensorData() {
   // Short circuit detection logic with improved thresholds
   bool previousState = shortCircuitDetected;
   
-  // Enhanced detection logic - Fixed for zero current readings
+  // Enhanced detection logic with proper zero current detection
+  static int zeroCurrentCount = 0;
+  
+  // Check for zero current (0.000A with 3 decimal precision)
+  bool isZeroCurrent = (abs(current) < 0.001); // 0.000A threshold
+  
+  // Count consecutive zero current readings
+  if (isZeroCurrent && voltage > 1.0) {
+    zeroCurrentCount++;
+  } else {
+    zeroCurrentCount = 0;
+  }
+  
+  // Circuit state detection
+  bool circuitOff = (voltage < 0.5 && abs(current) < 0.001 && power < 0.1);
+  
+  // Short circuit conditions
   bool currentOverload = (abs(current) > CURRENT_THRESHOLD);
-  bool voltageDropped = (voltage < VOLTAGE_DROP_THRESHOLD && voltage > 0.1); // Avoid false triggers at 0V
-  bool powerSpike = (power > 50.0); // Power threshold
+  bool voltageDropped = (voltage < VOLTAGE_DROP_THRESHOLD && voltage > 0.5);
+  bool powerSpike = (power > 50.0);
+  bool zeroCurrentShortCircuit = (zeroCurrentCount >= 3 && voltage > 1.0); // 3 consecutive zero readings
   
-  // Special handling for zero current (0.000A) - this should trigger short circuit
-  bool zeroCurrentWithVoltage = (abs(current) < 0.001 && voltage > 1.0); // Current is essentially zero but voltage present
-  
-  shortCircuitDetected = currentOverload || voltageDropped || powerSpike || zeroCurrentWithVoltage;
+  shortCircuitDetected = !circuitOff && (currentOverload || voltageDropped || powerSpike || zeroCurrentShortCircuit);
   
   // Log short circuit events with debouncing
   static unsigned long lastAlertTime = 0;
   if (shortCircuitDetected && !previousState && (millis() - lastAlertTime > 2000)) {
-    Serial.println("SHORT CIRCUIT DETECTED!");
+    Serial.println("⚠️  SHORT CIRCUIT DETECTED!");
     Serial.print("Voltage: "); Serial.print(voltage, 3); Serial.println("V");
     Serial.print("Current: "); Serial.print(current, 3); Serial.println("A");
     Serial.print("Power: "); Serial.print(power, 3); Serial.println("W");
+    Serial.print("Zero current count: "); Serial.println(zeroCurrentCount);
     logShortCircuitEvent();
     lastAlertTime = millis();
+  }
+  
+  // Log circuit state changes
+  static bool previousCircuitOff = false;
+  if (circuitOff != previousCircuitOff) {
+    if (circuitOff) {
+      Serial.println("🔌 Circuit OFF - No power detected");
+    } else {
+      Serial.println("⚡ Circuit ON - Power detected");
+    }
+    previousCircuitOff = circuitOff;
   }
   
   // Debug output every 5 seconds
